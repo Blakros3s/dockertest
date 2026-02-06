@@ -58,7 +58,28 @@ jobs:
           FRONTEND_PORT=3000
           NEXT_PUBLIC_API_URL=http://localhost:8000
           EOF
-          echo "✅ Created .env file for CI testing"
+          echo "✅ Created docker/.env file for CI testing"
+          
+          # Create frontend .env.production for UAT compose
+          cd ../frontend
+          cat > .env.production << EOF
+          NEXT_PUBLIC_API_URL=http://localhost:8000
+          EOF
+          echo "✅ Created frontend/.env.production file for CI testing"
+          
+          # Create backend .env.uat for UAT compose
+          cd ../backend
+          cat > .env.uat << EOF
+          DEBUG=False
+          SECRET_KEY=test-secret-key-for-ci-only
+          ALLOWED_HOSTS=localhost,127.0.0.1
+          POSTGRES_HOST=db
+          POSTGRES_PORT=5432
+          POSTGRES_DB=fullstack_db
+          POSTGRES_USER=fullstack_user
+          POSTGRES_PASSWORD=fullstack_password
+          EOF
+          echo "✅ Created backend/.env.uat file for CI testing"
 
       - name: Build and Test Docker Images
         run: |
@@ -138,9 +159,6 @@ jobs:
             
             echo "🚀 Starting containers in detached mode..."
             docker compose -f docker-compose.base.yml -f docker-compose.uat.yml up -d
-            
-            #echo "🧹 Cleaning up unused Docker resources..."
-            #docker system prune -f
             
             echo "📊 Current Docker status:"
             docker compose -f docker-compose.base.yml -f docker-compose.uat.yml ps

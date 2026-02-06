@@ -1,0 +1,151 @@
+name: Test & Deploy to VPS (Docker Mode)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # Manual trigger button
+
+jobs:
+  test:
+    name: Run Tests & Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test SSH login with retries (passphrase protected key)
+        run: |
+          echo "🔑 Setting up SSH key..."
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          echo "🔑 Starting ssh-agent and adding key with passphrase..."
+          eval "$(ssh-agent -s)"
+          # Feed both the key and the passphrase into ssh-add
+          echo "${{ secrets.SSH_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/id_rsa
+
+          echo "🔑 Testing SSH login..."
+          for i in 1 2 3; do
+            ssh -o StrictHostKeyChecking=no \
+                -p ${{ secrets.SSH_PORT }} \
+                ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo ✅ SSH login successful" && break
+            echo "❌ Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+
+      - uses: actions/checkout@v4
+
+      - name: Test SSH Connection to VPS
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          port: ${{ secrets.SSH_PORT }}
+          script: echo "✅ SSH connection verified"
+
+      - name: Create .env file for testing
+        run: |
+          cd docker
+          cat > .env << EOF
+          COMPOSE_PROJECT_NAME=fullstack
+          POSTGRES_USER=fullstack_user
+          POSTGRES_PASSWORD=fullstack_password
+          POSTGRES_DB=fullstack_db
+          POSTGRES_HOST=db
+          POSTGRES_PORT=5432
+          BACKEND_PORT=8000
+          FRONTEND_PORT=3000
+          NEXT_PUBLIC_API_URL=http://localhost:8000
+          EOF
+          echo "✅ Created .env file for CI testing"
+
+      - name: Build and Test Docker Images
+        run: |
+          echo "🐳 Building Docker images for testing..."
+          cd docker
+          
+          # Build with cache (using UAT config for testing)
+          docker compose -f docker-compose.base.yml -f docker-compose.uat.yml build
+          
+          echo "✅ All Docker images built successfully"
+          
+          echo "📊 Built images:"
+          docker images --filter "reference=fullstack*" --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+          
+          echo "🧪 Starting containers for health checks..."
+          docker compose -f docker-compose.base.yml -f docker-compose.uat.yml up -d
+          
+          echo "⏳ Waiting for services to be healthy..."
+          sleep 30
+          
+          echo "🏥 Checking container health..."
+          docker compose -f docker-compose.base.yml -f docker-compose.uat.yml ps
+          
+          # Check if all containers are running
+          if docker compose -f docker-compose.base.yml -f docker-compose.uat.yml ps | grep -q "Exit"; then
+            echo "❌ Some containers failed to start"
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml logs
+            exit 1
+          fi
+          
+          echo "✅ All containers are running"
+          
+          echo "🧹 Cleaning up test containers..."
+          docker compose -f docker-compose.base.yml -f docker-compose.uat.yml down  
+
+
+  deploy:
+    name: Deploy to VPS (Docker)
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy & Restart Docker Containers
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e  # Exit on error
+            
+            # Redirect all output to the deployment log
+            # exec > /srv/logs/dockertest/deploy.log 2>&1
+            exec > /srv/logs/dockertest/deploy-$(date +"%Y-%m-%d_%H-%M-%S").log 2>&1
+            
+            echo "📅 Deployment started at $(date)"
+            
+            echo "📂 Navigating to project directory..."
+            cd /srv/dockertest || exit 1
+            
+            echo "🔄 Resetting any local changes..."
+            git reset --hard HEAD
+            
+            echo "📥 Pulling latest code..."
+            git pull origin main
+            
+            echo " Entering docker directory..."
+            cd docker || exit 1
+            
+            #echo "🐳 Stopping existing containers..."
+            #docker compose -f docker-compose.base.yml -f docker-compose.uat.yml down
+            
+            echo "🏗️ Building Docker images (with cache)..."
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml build --no-cache
+            
+            echo "🚀 Starting containers in detached mode..."
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml up -d
+            
+            #echo "🧹 Cleaning up unused Docker resources..."
+            #docker system prune -f
+            
+            echo "📊 Current Docker status:"
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml ps
+            
+            echo "📋 Container logs (last 50 lines):"
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml logs --tail=50
+            
+            echo "✅ Deployment completed at $(date)"

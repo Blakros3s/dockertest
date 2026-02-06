@@ -4,6 +4,13 @@ import Link from 'next/link'
 export default function Home() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      {/* Docker Dev Environment Banner - NEW */}
+      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-6 text-center shadow-lg">
+        <p className="text-sm md:text-base font-semibold">
+          🚀 Docker Development Environment Active | Updated: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
+        </p>
+      </div>
+
       {/* Animated background */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute -inset-[10px] opacity-50">

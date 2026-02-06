@@ -1,0 +1,41 @@
+# ==============================================================================
+# Development 
+# ==============================================================================
+
+name: association_dev
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-association}_db
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile.dev
+    container_name: ${COMPOSE_PROJECT_NAME:-association}_backend
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+    depends_on:
+      - db
+    command: python manage.py runserver 0.0.0.0:8000
+
+  frontend:
+    container_name: ${COMPOSE_PROJECT_NAME:-association}_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"

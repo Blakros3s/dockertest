@@ -88,7 +88,7 @@ export default function DashboardPage() {
                             Welcome back, {user?.username || 'User'}! 👋
                         </h2>
                         <p className="text-gray-300 text-lg">
-                            You're successfully logged in to your dashboard.
+                            You&apos;re successfully logged in to your dashboard.
                         </p>
                     </div>
 

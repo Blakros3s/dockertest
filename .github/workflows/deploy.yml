@@ -1,0 +1,151 @@
+name: Deploy to VPS (Docker Compose)
+
+on:
+  # Trigger after CI workflow completes successfully
+  workflow_run:
+    workflows: ["CI – Lint & Test (No Docker Runtime)"]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'develop'
+
+    name: Deploy on VPS
+    runs-on: ubuntu-latest
+
+    # Prevent multiple deployments from running simultaneously
+    concurrency:
+      group: deploy-uat
+      cancel-in-progress: false
+
+    steps:
+      - name: Test SSH login with retries (passphrase protected key)
+        run: |
+          echo "🔑 Setting up SSH key..."
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          echo "🔑 Starting ssh-agent and adding key with passphrase..."
+          eval "$(ssh-agent -s)"
+          # Feed both the key and the passphrase into ssh-add
+          echo "${{ secrets.SSH_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/id_rsa
+
+          echo "🔑 Testing SSH login..."
+          for i in 1 2 3; do
+            ssh -o StrictHostKeyChecking=no \
+                -p ${{ secrets.SSH_PORT }} \
+                ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo ✅ SSH login successful" && break
+            echo "❌ Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+
+
+      - name: Safe Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+
+            CURRENT_COMMIT=""
+
+            rollback() {
+              echo "🚨 Deployment failed — rolling back..."
+              
+              # Revert code changes
+              if [ -n "$CURRENT_COMMIT" ]; then
+                cd /srv/dockertest
+                git reset --hard $CURRENT_COMMIT
+                echo "🔙 Reverted to commit: $CURRENT_COMMIT"
+              fi
+              
+              # Restart old containers
+              cd /srv/dockertest/docker
+              docker compose -f docker-compose.base.yml -f docker-compose.uat.yml down
+              docker compose -f docker-compose.base.yml -f docker-compose.uat.yml up -d
+              
+              echo "🔁 Rollback completed"
+            }
+
+            trap rollback ERR
+
+            exec > /srv/logs/dockertest/deploy-$(date +"%F_%T").log 2>&1
+
+            echo "🚀 Deployment started at $(date)"
+
+            cd /srv/dockertest
+
+            # Save current commit for rollback
+            CURRENT_COMMIT=$(git rev-parse HEAD)
+            echo "📌 Current commit: $CURRENT_COMMIT"
+
+            echo "🔍 Validating environment files..."
+            REQUIRED_FILES=(
+              "docker/.env"
+              "backend/.env.uat"
+              "frontend/.env.production"
+            )
+
+            for file in "${REQUIRED_FILES[@]}"; do
+              if [ ! -f "$file" ]; then
+                echo "❌ Missing required file: $file"
+                exit 1
+              fi
+            done
+            echo "✅ Environment validation passed"
+
+              echo "🗄️ Backing up database..."
+              BACKUP_DIR="/srv/backups/dockertest/"
+              TIMESTAMP=$(date +"%F_%H-%M-%S")
+
+              cd docker
+              docker compose -f docker-compose.base.yml -f docker-compose.uat.yml exec -T db \
+                pg_dump -U fullstack_user fullstack_db \
+                > "$BACKUP_DIR/db_$TIMESTAMP.sql"
+
+              echo "✅ Database backup created: db_$TIMESTAMP.sql"
+
+              # Keep only last 7 days of backups
+              find "$BACKUP_DIR" -name "db_*.sql" -mtime +7 -delete
+              echo "🧹 Cleaned up old backups (kept last 7 days)"
+
+            cd /srv/dockertest
+
+            echo "📥 Pulling latest code..."
+            git fetch origin
+            git reset --hard origin/main
+
+            cd docker
+
+            echo "🐳 Building images on VPS..."
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml build
+
+            echo "🚀 Starting new containers..."
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml up -d
+
+            echo "⏳ Waiting for containers to start..."
+            sleep 15
+
+            echo "🔍 Checking container status..."
+            CONTAINER_STATUS=$(docker compose -f docker-compose.base.yml -f docker-compose.uat.yml ps --format json | jq -r '.[].State' | grep -v "running" || true)
+
+            if [ -n "$CONTAINER_STATUS" ]; then
+              echo "❌ Some containers are not running:"
+              docker compose -f docker-compose.base.yml -f docker-compose.uat.yml ps
+              exit 1
+            fi
+
+            echo "✅ All containers are running"
+
+            echo "📊 Final container status:"
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml ps
+
+            echo "✅ Deployment completed successfully at $(date)"

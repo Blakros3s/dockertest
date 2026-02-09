@@ -40,7 +40,7 @@ def login_view(request):
     password = serializer.validated_data['password']
 
     user = authenticate(username=username, password=password)
-    
+
     if user is not None:
         refresh = RefreshToken.for_user(user)
 

@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches: 
-      - develop
+      - main
       - deploy  # Run tests before deployment
   workflow_dispatch:  # Allow manual trigger
 

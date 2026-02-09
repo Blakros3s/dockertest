@@ -7,7 +7,7 @@ export default function Home() {
       {/* Docker Dev Environment Banner - NEW */}
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-6 text-center shadow-lg">
         <p className="text-sm md:text-base font-semibold">
-          🚀 Docker Development Environment Active | Updated: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
+          🚀 Docker Deployment Verified | {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
         </p>
       </div>
 

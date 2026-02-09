@@ -69,8 +69,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build backend image only
-        run: docker build backend -t backend:ci-test
+      - name: Build backend image (sanity check)
+        run: docker build -f docker/backend/Dockerfile.uat . -t backend:ci-test
 
-      - name: Build frontend image only
-        run: docker build frontend -t frontend:ci-test
+      - name: Build frontend image (sanity check)
+        run: docker build -f docker/frontend/Dockerfile . -t frontend:ci-test

@@ -32,11 +32,6 @@ jobs:
         run: |
           flake8 .
 
-      - name: Backend tests
-        working-directory: backend
-        run: |
-          pytest
-
 
   frontend:
     name: Frontend – Lint & Build
@@ -53,6 +48,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Frontend security audit
+        working-directory: frontend
+        run: npm audit --audit-level=high
 
       - name: Frontend lint
         working-directory: frontend

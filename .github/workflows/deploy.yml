@@ -22,26 +22,36 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - name: Test SSH login with retries (passphrase protected key)
-        run: |
-          echo "🔑 Setting up SSH key..."
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+      #- name: Test SSH login with retries (passphrase protected key)
+      #  run: |
+      #    echo "🔑 Setting up SSH key..."
+      #    mkdir -p ~/.ssh
+      #    echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+      #    chmod 600 ~/.ssh/id_rsa
 
-          echo "🔑 Starting ssh-agent and adding key with passphrase..."
-          eval "$(ssh-agent -s)"
-          # Feed both the key and the passphrase into ssh-add
-          echo "${{ secrets.SSH_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/id_rsa
+      #    echo "🔑 Starting ssh-agent and adding key with passphrase..."
+      #    eval "$(ssh-agent -s)"
+      #    # Feed both the key and the passphrase into ssh-add
+      #    echo "${{ secrets.SSH_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/id_rsa
 
-          echo "🔑 Testing SSH login..."
-          for i in 1 2 3; do
-            ssh -o StrictHostKeyChecking=no \
-                -p ${{ secrets.SSH_PORT }} \
-                ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo ✅ SSH login successful" && break
-            echo "❌ Attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+      #    echo "🔑 Testing SSH login..."
+      #    SUCCESS=false
+      #    for i in 1 2 3 4 5; do
+      #      if ssh -o StrictHostKeyChecking=no \
+      #          -o ConnectTimeout=10 \
+      #          -p ${{ secrets.SSH_PORT }} \
+      #          ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo ✅ SSH login successful"; then
+      #        SUCCESS=true
+      #        break
+      #      fi
+      #      echo "❌ Attempt $i failed, retrying in 10s..."
+      #      sleep 10
+      #    done
+
+      #    if [ "$SUCCESS" = false ]; then
+      #      echo "🚨 Failed to connect to VPS after 5 attempts."
+      #      exit 1
+      #    fi
 
 
       - name: Safe Deploy via SSH
@@ -52,6 +62,8 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
           port: ${{ secrets.SSH_PORT }}
+          timeout: 60s
+          command_timeout: 20m
           script: |
             set -e
 
@@ -83,6 +95,14 @@ jobs:
 
             cd /srv/dockertest
 
+            # Extract DB credentials from .env
+            if [ -f "docker/.env" ]; then
+              export $(grep -E '^(POSTGRES_USER|POSTGRES_DB)=' docker/.env | xargs)
+              echo "✅ Extracted DB credentials from docker/.env"
+            else
+              echo "⚠️ docker/.env not found"
+            fi
+
             # Save current commit for rollback
             CURRENT_COMMIT=$(git rev-parse HEAD)
             echo "📌 Current commit: $CURRENT_COMMIT"
@@ -102,20 +122,21 @@ jobs:
             done
             echo "✅ Environment validation passed"
 
-              echo "🗄️ Backing up database..."
-              BACKUP_DIR="/srv/backups/dockertest/"
-              TIMESTAMP=$(date +"%F_%H-%M-%S")
+            echo "🗄️ Backing up database..."
+            BACKUP_DIR="/srv/backups/dockertest/"
+            TIMESTAMP=$(date +"%F_%H-%M-%S")
 
-              cd docker
-              docker compose -f docker-compose.base.yml -f docker-compose.uat.yml exec -T db \
-                pg_dump -U fullstack_user fullstack_db \
-                > "$BACKUP_DIR/db_$TIMESTAMP.sql"
+            cd docker
+            # Use extracted variables for backup
+            docker compose -f docker-compose.base.yml -f docker-compose.uat.yml exec -T db \
+              pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
+              > "$BACKUP_DIR/db_$TIMESTAMP.sql"
 
-              echo "✅ Database backup created: db_$TIMESTAMP.sql"
+            echo "✅ Database backup created: db_$TIMESTAMP.sql"
 
-              # Keep only last 7 days of backups
-              find "$BACKUP_DIR" -name "db_*.sql" -mtime +7 -delete
-              echo "🧹 Cleaned up old backups (kept last 7 days)"
+            # Keep only last 7 days of backups
+            find "$BACKUP_DIR" -name "db_*.sql" -mtime +7 -delete
+            echo "🧹 Cleaned up old backups (kept last 7 days)"
 
             cd /srv/dockertest
 

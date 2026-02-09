@@ -13,15 +13,15 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (AllowAny,)
     serializer_class = RegisterSerializer
-    
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        
+
         # Generate tokens
         refresh = RefreshToken.for_user(user)
-        
+
         return Response({
             'user': UserSerializer(user).data,
             'refresh': str(refresh),
@@ -35,20 +35,20 @@ def login_view(request):
     """User login endpoint"""
     serializer = LoginSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    
+
     username = serializer.validated_data['username']
     password = serializer.validated_data['password']
-    
+
     user = authenticate(username=username, password=password)
     
     if user is not None:
         refresh = RefreshToken.for_user(user)
-        
+
         response = Response({
             'user': UserSerializer(user).data,
             'message': 'Login successful'
         })
-        
+
         # Set HTTP-only cookies
         response.set_cookie(
             key='access_token',
@@ -66,7 +66,7 @@ def login_view(request):
             samesite='Lax',
             max_age=604800  # 7 days
         )
-        
+
         return response
     else:
         return Response(
